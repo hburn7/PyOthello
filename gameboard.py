@@ -333,12 +333,13 @@ class GameBoard:
 
             # Todo: Iterative deepening
             evaluation = self.alpha_beta(new_board, p_color, 1, max_depth, m.MIN_VAL, m.MAX_VAL, True)
+            replacement_move = m.Move(next_move.pos, evaluation.score, False)
+            replacement_move.search_result = evaluation
+
             if evaluation.score > best_move.value:
-                replacement_move = m.Move(next_move.pos, evaluation.score, False)
-                replacement_move.search_result = evaluation
                 best_move = replacement_move
 
-            logger.log_comment(f'Evaluated {next_move}')
+            logger.log_comment(f'Evaluated {replacement_move}')
 
         logger.log_comment(f'Identified {best_move} as best move.')
         return best_move
