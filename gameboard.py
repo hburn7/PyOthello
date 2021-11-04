@@ -269,12 +269,12 @@ class GameBoard:
         score = int((f_corners * w_corners) + (f_adj_corners * w_adj_corners) +
                     (f_mobility * w_mobility) + (f_parity * w_parity) + (f_stability * w_stability))
 
-        # End game
+        # End game - return below min for confirmed loss, above max for confirmed win.
         if p_count + o_count == 64:
-            if w_parity < 0:
-                return -99999999
+            if p_count < o_count:
+                return m.MIN_VAL - 1
             else:
-                return 99999999
+                return m.MAX_VAL + 1
 
         return score
 
@@ -283,16 +283,17 @@ class GameBoard:
             res = SearchResult(depth, player, board.evaluate())
             return res
 
-        maximizer_board = board.get_for_color(player)
-        minimizer_board = board.get_for_color(-player)
+        p_board = board.get_for_color(player)
+        o_board = board.get_for_color(-player)
 
         if maximizer:
-            queue = board.generate_moves_priority_queue(maximizer_board, minimizer_board)
+            queue = board.generate_moves_priority_queue(p_board, o_board)
             max_eval = m.MIN_VAL
 
             while not queue.empty():
-                board.apply_move(maximizer_board, queue.get().move)
-                search_result = self.alpha_beta(board, -player, depth + 1, max_depth, alpha, beta, False)
+                new_board = copy.deepcopy(board)
+                new_board.apply_move(p_board, queue.get().move)
+                search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, False)
                 max_eval = max(max_eval, search_result.score)
                 alpha = max(alpha, search_result.score)
                 if beta <= alpha:
@@ -300,12 +301,13 @@ class GameBoard:
 
             return SearchResult(depth, player, max_eval)
         else:
-            queue = board.generate_moves_priority_queue(maximizer_board, minimizer_board)
+            queue = board.generate_moves_priority_queue(p_board, o_board)
             min_eval = m.MAX_VAL
 
             while not queue.empty():
-                board.apply_move(maximizer_board, queue.get().move)
-                search_result = self.alpha_beta(board, -player, depth + 1, max_depth, alpha, beta, True)
+                new_board = copy.deepcopy(board)
+                new_board.apply_move(p_board, queue.get().move)
+                search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, True)
                 min_eval = min(min_eval, search_result.score)
                 beta = min(beta, search_result.score)
                 if beta <= alpha:
@@ -318,21 +320,28 @@ class GameBoard:
         o = self.get_for_color(-p_color)
 
         # test
-        max_depth = 4
+        # max_depth MUST be even.
+        max_depth = 6
         p_moves = self.generate_moves_priority_queue(p, o)
+
+        if p_moves.empty():
+            logger.log_comment(f'No moves to make. Returning pass move.')
+            return m.Move()
 
         if random:
             return p_moves.get().move
 
         # Todo: Time
-        best_move = m.Move(is_pass=False)
+        best_move = p_moves.get().move
         while not p_moves.empty():
             next_priority = p_moves.get()
             next_move = m.Move(next_priority.move.pos, next_priority.move.value, next_priority.move.isPass)
+            new_p = copy.deepcopy(p)
             new_board = copy.deepcopy(self)
+            new_board.apply_move(new_p, next_move)
 
             # Todo: Iterative deepening
-            evaluation = self.alpha_beta(new_board, p_color, 1, max_depth, m.MIN_VAL, m.MAX_VAL, True)
+            evaluation = self.alpha_beta(new_board, -p_color, 1, max_depth, m.MIN_VAL, m.MAX_VAL, True)
             replacement_move = m.Move(next_move.pos, evaluation.score, False)
             replacement_move.search_result = evaluation
 
