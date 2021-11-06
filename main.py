@@ -2,6 +2,7 @@ import sys
 import argparse
 
 import output
+import time
 from config import Config
 import color
 import numpy as np
@@ -96,7 +97,12 @@ while not g_board.is_game_complete():
     logger.log_comment(prompt)
 
     if p_turn:
+        start = time.time()
         move = g_board.select_move(p_color, False)
+        end = time.time()
+
+        print(f'Evaluated best move in {end - start}s')
+
         if not move.isPass:
             g_board.apply_move(p_board, move)
 

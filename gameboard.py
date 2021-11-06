@@ -24,7 +24,7 @@ class GameBoard:
     UNIVERSE = np.uint64(0xffffffffffffffff)
 
     CORNER_MASK = np.uint64(0x8100000000000081)
-    CORNER_ADJACENT_MASK = np.uint64(0x42C3000000C342)
+    CORNER_ADJACENT_MASK = np.uint64(0x42C300000000C342)
 
     DIR_INCREMENTS = np.array([8, 9, 1, -7, -8, -9, -1, 7], dtype=np.int32)
     DIR_MASKS = np.array([
@@ -48,6 +48,13 @@ class GameBoard:
         -20, -35, -4, 1, 1, -4, -35, -20,
         50, -20, 11, 8, 8, 11, -20, 50
     ])
+
+    STABILITY_IGNORES = {
+        0: [1, 8, 9],
+        7: [6, 14, 15],
+        56: [57, 48, 49],
+        63: [62, 55, 54]
+    }
 
     from bitboard import BitBoard
     def __init__(self, config: Config, player: BitBoard, opponent: BitBoard):
@@ -220,51 +227,85 @@ class GameBoard:
         p_moves_possible = self.generate_move_mask(p_board.bits, o_board.bits)
         o_moves_possible = self.generate_move_mask(o_board.bits, p_board.bits)
 
-        p_pos_weight = o_pos_weight = p_corners = o_corners = p_adj_corners = o_adj_corners = 0
+        p_pos_weight = o_pos_weight = p_corners = o_corners = p_adj_corners = o_adj_corners = np.int(0)
 
         p_corner_mask = np.uint64(p_board.bits & self.CORNER_MASK)
         o_corner_mask = np.uint64(o_board.bits & self.CORNER_MASK)
+
+        p_corner_pos = []
+        o_corner_pos = []
 
         p_adj_corner_mask = np.uint64(p_board.bits & self.CORNER_ADJACENT_MASK)
         o_adj_corner_mask = np.uint64(o_board.bits & self.CORNER_ADJACENT_MASK)
 
         # Count number of adjacent corners for each player & their position weight.
+
         for i in range(64):
-            mask = np.uint64(1 << i)
+            mask = np.uint64(np.left_shift(1, i))
             weight = self.WEIGHT_MAP[i]
 
-            # Pos weights
-            if (p_moves_possible & mask) != 0:
-                p_pos_weight += weight
-            elif (o_moves_possible & mask) != 0:
-                o_pos_weight += weight
-
             # Corners
-            if (p_corner_mask & mask) != 0:
+            if (np.bitwise_and(p_corner_mask, mask)) != 0:
                 p_corners += 1
-            elif (o_corner_mask & mask) != 0:
+                p_corner_pos.append(i)
+            elif (np.bitwise_and(o_corner_mask, mask)) != 0:
                 o_corners += 1
+                o_corner_pos.append(i)
+
+            # Whether to ignore adjacent entries.
+            ignore_self = False
+            ignore_opp = False
 
             # Adjacent corners
-            if (p_adj_corner_mask & mask) != 0:
-                p_adj_corners += 1
-            elif (o_adj_corner_mask & mask) != 0:
-                o_adj_corners += 1
+            if (np.bitwise_and(p_adj_corner_mask, mask)) != 0:
+                if len(p_corner_pos) != 0:
+                    ignore_self = self.__ignore_adjacents(i)
+
+                if not ignore_self:
+                    p_adj_corners += 1
+
+            elif (np.bitwise_and(o_adj_corner_mask, mask)) != 0:
+                if len(o_corner_pos) != 0:
+                    ignore_opp = self.__ignore_adjacents(i)
+
+                if not ignore_opp:
+                    o_adj_corners += 1
+
+            # Pos weights
+            if not ignore_self and (np.bitwise_and(p_moves_possible, mask) != 0):
+                p_pos_weight += weight
+            elif not ignore_opp and (np.bitwise_and(o_moves_possible, mask)) != 0:
+                o_pos_weight += weight
 
         # Compute weights
         w_stability = self.__get_sum_weight(p_pos_weight, o_pos_weight)
         w_parity = self.__get_sum_weight(p_count, o_count)
         w_corners = self.__get_sum_weight(p_corners, o_corners)
-        w_adj_corners = self.__get_sum_weight(p_adj_corners, o_adj_corners)
+        w_adj_corners = -self.__get_sum_weight(p_adj_corners, o_adj_corners)
         w_mobility = self.__get_sum_weight(utils.count_bits(p_moves_possible), utils.count_bits(o_moves_possible))
 
         # Factors. How important each value is relative to the others.
         # todo: perhaps include additional weight for if a player is forced to pass
-        f_corners = 90
-        f_adj_corners = 10
-        f_mobility = 15
-        f_parity = 5
-        f_stability = 45
+        f_corners = 160
+        f_adj_corners = 20
+        f_mobility = 20
+        f_parity = 14
+        f_stability = 35
+
+        if o_moves_possible == 0:
+            f_mobility = 500
+
+        board_piece_sum = p_count + o_count
+        if board_piece_sum > 50:
+            # Towards the end game
+            f_parity = 20
+            f_mobility = 20
+
+        if board_piece_sum > 58:
+            # Right at the end game
+            f_parity = 200
+            f_mobility = 10
+            f_stability = 5
 
         score = int((f_corners * w_corners) + (f_adj_corners * w_adj_corners) +
                     (f_mobility * w_mobility) + (f_parity * w_parity) + (f_stability * w_stability))
@@ -278,6 +319,16 @@ class GameBoard:
 
         return score
 
+    def __ignore_adjacents(self, i):
+        """Helper function to evaluate that determines whether the adjacent corner negative weight can be ignored."""
+        matching_adjacents = self.STABILITY_IGNORES.get(i)
+        if matching_adjacents is None:
+            return False
+
+        if i in matching_adjacents:
+            return True
+        return False
+
     def alpha_beta(self, board: 'GameBoard', player: int, depth: int, max_depth: int, alpha, beta, maximizer: bool):
         if depth >= max_depth or board.is_game_complete():
             res = SearchResult(depth, player, board.evaluate())
@@ -285,14 +336,16 @@ class GameBoard:
 
         p_board = board.get_for_color(player)
         o_board = board.get_for_color(-player)
+        queue = board.generate_moves_priority_queue(p_board, o_board)
 
         if maximizer:
-            queue = board.generate_moves_priority_queue(p_board, o_board)
             max_eval = m.MIN_VAL
 
             while not queue.empty():
+                new_p_board = copy.deepcopy(p_board)
                 new_board = copy.deepcopy(board)
-                new_board.apply_move(p_board, queue.get().move)
+                new_board.apply_move(new_p_board, queue.get().move)
+
                 search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, False)
                 max_eval = max(max_eval, search_result.score)
                 alpha = max(alpha, search_result.score)
@@ -301,12 +354,13 @@ class GameBoard:
 
             return SearchResult(depth, player, max_eval)
         else:
-            queue = board.generate_moves_priority_queue(p_board, o_board)
             min_eval = m.MAX_VAL
 
             while not queue.empty():
+                new_p_board = copy.deepcopy(p_board)
                 new_board = copy.deepcopy(board)
-                new_board.apply_move(p_board, queue.get().move)
+                new_board.apply_move(new_p_board, queue.get().move)
+
                 search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, True)
                 min_eval = min(min_eval, search_result.score)
                 beta = min(beta, search_result.score)
