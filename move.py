@@ -1,6 +1,8 @@
 import numpy as np
 from dataclasses import dataclass, field
-import gameboard
+from queue import PriorityQueue
+
+from typing import List, Optional
 
 MIN_VAL = np.iinfo('int32').min
 MAX_VAL = np.iinfo('int32').max
@@ -20,6 +22,28 @@ class Move:
 
 # Loose wrapper for Move, allows use in a priority queue
 @dataclass(order=True)
-class PrioritizedItem:
+class PrioritizedMove:
     priority: int
     move: Move = field(compare=False)
+
+class PrioritizedMoveQueue(PriorityQueue):
+    def __init__(self, items: List[PrioritizedMove]):
+        super().__init__()
+        for x in items:
+            self.put(x)
+        self.items = items
+
+    def __init__(self):
+        super().__init__()
+        self.items = []
+
+    def __str__(self):
+        s = ''
+        for item in self.items:
+            s += f'PrioritizedMove: Priority: {item.priority} | {item.move}\n'
+        return s
+
+    def put(self, item: PrioritizedMove, block: bool = ..., timeout: Optional[float] = ...) -> None:
+        super().put(item, block, timeout)
+        self.items.append(item)
+

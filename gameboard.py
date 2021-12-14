@@ -2,13 +2,13 @@ import copy
 
 import color
 import move as m
+from move import PrioritizedMoveQueue
 import logger
 import numpy as np
 import utils
 from dataclasses import dataclass
 
 from config import Config
-from queue import PriorityQueue
 
 
 @dataclass
@@ -62,6 +62,14 @@ class GameBoard:
         self.opponent_color = -player.color
         self.player_board = player
         self.opponent_board = opponent
+
+    def __str__(self):
+        return f'--- GameBoard ---\n' \
+               f'Player Board: {self.player_board}\n' \
+               f'Opponent Board: {self.opponent_board}\n' \
+               f'Config: {self.config}\n' \
+               f'Available moves primary:\n{self.generate_moves_priority_queue(self.player_board, self.opponent_board)}' \
+               f'Available moves opponent:\n{self.generate_moves_priority_queue(self.opponent_board, self.player_board)}'
 
     def draw(self):
         logger.log_comment('    A B C D E F G H')
@@ -145,7 +153,7 @@ class GameBoard:
         return move_mask
 
     def generate_moves_priority_queue(self, p_state: BitBoard, o_state: BitBoard):
-        queue = PriorityQueue()
+        queue = PrioritizedMoveQueue()
 
         state = self.generate_move_mask(p_state.bits, o_state.bits)
         for i in range(64):
@@ -153,7 +161,7 @@ class GameBoard:
             if (mask & state) != 0:
                 weight = self.WEIGHT_MAP[i]
                 move = m.Move(i, weight, False)
-                priority_item = m.PrioritizedItem(move.value, move)
+                priority_item = m.PrioritizedMove(move.value, move)
                 queue.put(priority_item)
 
         return queue
@@ -372,9 +380,9 @@ class GameBoard:
         p = self.get_for_color(p_color)
         o = self.get_for_color(-p_color)
 
-        p_moves = self.generate_moves_priority_queue(p, o)
-        if p_moves.empty():
+        p_moves = self.generate_moves_priority_queue(p, o).items
+        if len(p_moves) == 0:
             logger.log_comment(f'No moves to make. Returning pass move.')
             return m.Move()
 
-        return np.choose(p_moves).move
+        return p_moves[np.random.randint(len(p_moves))].move
