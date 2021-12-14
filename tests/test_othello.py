@@ -6,6 +6,7 @@ import numpy as np
 import output
 from move import Move
 
+
 class Constants:
     @staticmethod
     def default_board_black():
@@ -68,6 +69,30 @@ class TestOthello(unittest.TestCase):
         valid = random.pos in [x.move.pos for x in queue.items]
         self.assertTrue(valid, f'Expected to find random move {random} in queue\n{queue}but did not.')
 
+    def test_pass_sequence(self):
+        """Tests a situation where no legal moves can be generated for a player. Move generated must be a pass."""
+        board = Constants.default_board_black()
+        move_sequence = ['B c 4', 'W e 3', 'B f 3', 'W g 3', 'B g 2', 'W c 5', 'B c 6', 'W b 5', 'B e 6', 'W d 7',
+                         'B c 3', 'W h 1', 'B c 8', 'W f 7', 'B a 6', 'W d 3', 'B h 3', 'W f 2', 'B f 1', 'W g 1',
+                         'B e 1', 'W d 1', 'B d 6', 'W h 4', 'B h 5', 'W h 2', 'B f 6', 'W h 6', 'B f 8', 'W g 6',
+                         'B f 5', 'W e 8', 'B d 8', 'W c 2', 'B f 4', 'W g 4', 'B b 4', 'W e 2', 'B c 1', 'W b 6',
+                         'B d 2', 'W g 5', 'B c 7', 'W b 1', 'B b 7', 'W a 8', 'B b 8', 'W g 7', 'B h 8', 'W a 4',
+                         'B b 3', 'W a 3', 'B e 7', 'W a 5', 'B a 2', 'W b 2', 'B a 1', 'W a 7']  # black must pass at this point
+        for m in move_sequence:
+            if m.startswith('W'):
+                c = color.WHITE
+            else:
+                c = color.BLACK
+
+            bitboard = board.get_for_color(c)
+            move = output.to_move(m, False)
+            board.apply_move(bitboard, move)
+
+        # Board is now at a state where black has no available moves.
+        possible = board.generate_moves_priority_queue(board.player_board, board.opponent_board)
+        self.assertTrue(len(possible.items) == 1 and possible.items[0].move.__eq__(Move()),
+                        f'Expected one pass move to be sole pass move.\n{board}\n{possible.items}')
+
     def test_input_conversion(self):
         chars = 'abcdefgh'
         nums = [x for x in range(1, 9)]
@@ -89,10 +114,11 @@ class TestOthello(unittest.TestCase):
         valid_pairs = [(x, y) for x, y in zip(fake_input, validations)]
         test_pairs = []
         for i in fake_input:
-            test_pairs.append((i, output.to_move(i)))
+            test_pairs.append((i, output.to_move(i, False)))
 
         for i in range(len(valid_pairs)):
-            self.assertTrue(valid_pairs[i][1].pos == test_pairs[i][1].pos, f'Failure on comparison. {valid_pairs[i][1].pos} did not equal {test_pairs[i][1].pos}')
+            self.assertTrue(valid_pairs[i][1].pos == test_pairs[i][1].pos,
+                            f'Failure on comparison. {valid_pairs[i][1].pos} did not equal {test_pairs[i][1].pos}')
 
 
 if __name__ == '__main__':

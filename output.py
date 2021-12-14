@@ -29,7 +29,7 @@ def out_move(p_color: int, move: move.Move, log_comment: bool):
 
     return ret
 
-def to_move(s: str) -> move.Move:
+def to_move(s: str, log_comment: bool) -> move.Move:
     """Returns a move for a given (valid) input. Returns a pass if the input is invalid"""
 
     # Assumes input is in format 'W a 1' or 'B h 8', etc.
@@ -42,5 +42,6 @@ def to_move(s: str) -> move.Move:
         logger.log_comment(f'Received input \'{s}\' (deemed invalid) -> returns pass move.')
         return move.Move()
 
-    logger.log_comment(f'Converted {s} to pos: {pos}')
+    if log_comment:
+        logger.log_comment(f'Converted {s} to pos: {pos}')
     return move.Move(pos, is_pass=False)

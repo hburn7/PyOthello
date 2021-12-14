@@ -164,6 +164,10 @@ class GameBoard:
                 priority_item = m.PrioritizedMove(move.value, move)
                 queue.put(priority_item)
 
+        if len(queue.items) == 0:
+            default = m.Move()
+            queue.put(m.PrioritizedMove(default.value, default))
+
         return queue
 
     # noinspection DuplicatedCode
