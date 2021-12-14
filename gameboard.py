@@ -5,7 +5,6 @@ import move as m
 import logger
 import numpy as np
 import utils
-from datetime import datetime
 from dataclasses import dataclass
 
 from config import Config
@@ -369,40 +368,13 @@ class GameBoard:
 
             return SearchResult(depth, player, min_eval)
 
-    def select_move(self, p_color: int, random: bool):
+    def select_random_move(self, p_color: int):
         p = self.get_for_color(p_color)
         o = self.get_for_color(-p_color)
 
-        # test
-        # max_depth MUST be even.
-        max_depth = 6
         p_moves = self.generate_moves_priority_queue(p, o)
-
         if p_moves.empty():
             logger.log_comment(f'No moves to make. Returning pass move.')
             return m.Move()
 
-        if random:
-            return p_moves.get().move
-
-        # Todo: Time
-        best_move = p_moves.get().move
-        while not p_moves.empty():
-            next_priority = p_moves.get()
-            next_move = m.Move(next_priority.move.pos, next_priority.move.value, next_priority.move.isPass)
-            new_p = copy.deepcopy(p)
-            new_board = copy.deepcopy(self)
-            new_board.apply_move(new_p, next_move)
-
-            # Todo: Iterative deepening
-            evaluation = self.alpha_beta(new_board, -p_color, 1, max_depth, m.MIN_VAL, m.MAX_VAL, True)
-            replacement_move = m.Move(next_move.pos, evaluation.score, False)
-            replacement_move.search_result = evaluation
-
-            if evaluation.score > best_move.value:
-                best_move = replacement_move
-
-            logger.log_comment(f'Evaluated {replacement_move}')
-
-        logger.log_comment(f'Identified {best_move} as best move.')
-        return best_move
+        return np.choose(p_moves).move

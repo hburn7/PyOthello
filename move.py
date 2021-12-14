@@ -5,8 +5,10 @@ import gameboard
 MIN_VAL = np.iinfo('int32').min
 MAX_VAL = np.iinfo('int32').max
 
+
 class Move:
-    def __init__(self, pos: int = -1, value: int = MIN_VAL, is_pass: bool = True, search_res: gameboard.SearchResult = None):
+    def __init__(self, pos: int = -1, value: int = MIN_VAL, is_pass: bool=True,
+                 search_res=None):
         self.pos = pos
         self.value = value
         self.isPass = is_pass
