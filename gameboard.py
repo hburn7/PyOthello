@@ -1,8 +1,7 @@
 import copy
 
 import color
-import move as m
-from move import PrioritizedMoveQueue
+from move import Move, PrioritizedMove, PrioritizedMoveQueue
 import logger
 import numpy as np
 import utils
@@ -16,6 +15,25 @@ class SearchResult:
     depth: int
     player: int
     score: int
+
+# TODO: https://github.com/brilee/python_uct/blob/master/naive_impl.py
+class UCTNode:
+    def __init__(self, game_state, parent=None, prior=0):
+        self.game_state = game_state
+        self.is_expanded = False
+        self.parent = parent
+        self.children = {} # Dict[move, UCTNode]
+        self.prior = prior
+        self.visits = 0
+        self.total_value = 0.0
+
+    def update(self, value: int):
+        """Update node and backpropogate to parent"""
+
+    def addChild(self, move, c, prior):
+        """Adds child node to known children"""
+        self.game_state.apply_move(move, self.game_state.get_for_color(c))
+        self.children[move] = UCTNode(self.game_state, parent=self, prior=prior)
 
 
 class GameBoard:
@@ -70,6 +88,9 @@ class GameBoard:
                f'Config: {self.config}\n' \
                f'Available moves primary:\n{self.generate_moves_priority_queue(self.player_board, self.opponent_board)}' \
                f'Available moves opponent:\n{self.generate_moves_priority_queue(self.opponent_board, self.player_board)}'
+
+    # def UCTSearch(self):
+
 
     def draw(self):
         logger.log_comment('    A B C D E F G H')
@@ -160,13 +181,13 @@ class GameBoard:
             mask = np.uint64(1 << i)
             if (mask & state) != 0:
                 weight = self.WEIGHT_MAP[i]
-                move = m.Move(i, weight, False)
-                priority_item = m.PrioritizedMove(move.value, move)
+                move = Move(p_state.color, i, weight, False)
+                priority_item = PrioritizedMove(move.value, move)
                 queue.put(priority_item)
 
         if len(queue.items) == 0:
-            default = m.Move()
-            queue.put(m.PrioritizedMove(default.value, default))
+            default = Move(color=p_state.color)
+            queue.put(PrioritizedMove(default.value, default))
 
         return queue
 
@@ -324,9 +345,9 @@ class GameBoard:
         # End game - return below min for confirmed loss, above max for confirmed win.
         if p_count + o_count == 64:
             if p_count < o_count:
-                return m.MIN_VAL - 1
+                return MIN_VAL - 1
             else:
-                return m.MAX_VAL + 1
+                return MAX_VAL + 1
 
         return score
 
@@ -350,7 +371,7 @@ class GameBoard:
         queue = board.generate_moves_priority_queue(p_board, o_board)
 
         if maximizer:
-            max_eval = m.MIN_VAL
+            max_eval = MIN_VAL
 
             while not queue.empty():
                 new_p_board = copy.deepcopy(p_board)
@@ -365,7 +386,7 @@ class GameBoard:
 
             return SearchResult(depth, player, max_eval)
         else:
-            min_eval = m.MAX_VAL
+            min_eval = MAX_VAL
 
             while not queue.empty():
                 new_p_board = copy.deepcopy(p_board)
@@ -387,6 +408,6 @@ class GameBoard:
         p_moves = self.generate_moves_priority_queue(p, o).items
         if len(p_moves) == 0:
             logger.log_comment(f'No moves to make. Returning pass move.')
-            return m.Move()
+            return Move(color=p_color)
 
         return p_moves[np.random.randint(len(p_moves))].move

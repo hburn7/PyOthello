@@ -101,7 +101,7 @@ while not g_board.is_game_complete():
         move = g_board.select_random_move(p_color)
         end = time.time()
 
-        print(f'Evaluated best move in {end - start}s')
+        print(f'Evaluated best move in {end - start:.4f}s')
 
         if not move.isPass:
             g_board.apply_move(p_board, move)
@@ -117,7 +117,10 @@ while not g_board.is_game_complete():
             valid = possible_moves > 0 and (np.uint64((1 << move.pos)) & possible_moves) != 0 or \
                     (move.isPass and possible_moves == 0)
         else:
+            start = time.time()
             move = g_board.select_random_move(o_color)
+            end = time.time()
+            print(f'Evaluated best move in {end - start:.5f}s')
 
         if not move.isPass:
             g_board.apply_move(o_board, move)

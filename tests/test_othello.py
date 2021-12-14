@@ -77,7 +77,8 @@ class TestOthello(unittest.TestCase):
                          'B e 1', 'W d 1', 'B d 6', 'W h 4', 'B h 5', 'W h 2', 'B f 6', 'W h 6', 'B f 8', 'W g 6',
                          'B f 5', 'W e 8', 'B d 8', 'W c 2', 'B f 4', 'W g 4', 'B b 4', 'W e 2', 'B c 1', 'W b 6',
                          'B d 2', 'W g 5', 'B c 7', 'W b 1', 'B b 7', 'W a 8', 'B b 8', 'W g 7', 'B h 8', 'W a 4',
-                         'B b 3', 'W a 3', 'B e 7', 'W a 5', 'B a 2', 'W b 2', 'B a 1', 'W a 7']  # black must pass at this point
+                         'B b 3', 'W a 3', 'B e 7', 'W a 5', 'B a 2', 'W b 2', 'B a 1',
+                         'W a 7']  # black must pass at this point
         for m in move_sequence:
             if m.startswith('W'):
                 c = color.WHITE
@@ -90,7 +91,7 @@ class TestOthello(unittest.TestCase):
 
         # Board is now at a state where black has no available moves.
         possible = board.generate_moves_priority_queue(board.player_board, board.opponent_board)
-        self.assertTrue(len(possible.items) == 1 and possible.items[0].move.__eq__(Move()),
+        self.assertTrue(len(possible.items) == 1 and possible.items[0].move.pos == Move(0).pos,
                         f'Expected one pass move to be sole pass move.\n{board}\n{possible.items}')
 
     def test_input_conversion(self):
@@ -105,10 +106,11 @@ class TestOthello(unittest.TestCase):
                 for l in chars:
                     fake_input.append(f'{c} {l} {n}')
 
-        for _ in colors:
+        for c in colors:
+            c_num = color.WHITE if c == 'W' else color.BLACK
             z = 63
             for _ in range(len(chars) * len(nums)):
-                validations.append(Move(z, is_pass=False))
+                validations.append(Move(c_num, z, is_pass=False))
                 z -= 1
 
         valid_pairs = [(x, y) for x, y in zip(fake_input, validations)]
