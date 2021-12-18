@@ -1,13 +1,15 @@
 import copy
+import math
+import numpy as np
+import time
+import resource
 
 import color
-from move import Move, PrioritizedMove, PrioritizedMoveQueue
 import logger
-import numpy as np
-import utils
-from dataclasses import dataclass
 
 from config import Config
+from move import Move, PrioritizedMove, PrioritizedMoveQueue
+from dataclasses import dataclass
 
 
 @dataclass
@@ -16,24 +18,113 @@ class SearchResult:
     player: int
     score: int
 
-# TODO: https://github.com/brilee/python_uct/blob/master/naive_impl.py
+
+# Inspired by: https://github.com/brilee/python_uct/blob/master/naive_impl.py
+# https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
 class UCTNode:
-    def __init__(self, game_state, parent=None, prior=0):
-        self.game_state = game_state
-        self.is_expanded = False
-        self.parent = parent
-        self.children = {} # Dict[move, UCTNode]
-        self.prior = prior
+    def __init__(self, game_state, parent=None, move=None):
+        self.game_state: GameBoard = game_state
+        self.parent: UCTNode = parent
         self.visits = 0
-        self.total_value = 0.0
+        self.value = 0.0
+        self.is_expanded = False
+        self.root = self if self.parent is None else self.__find_root()
+        self.children = []
+        self.move = move
 
-    def update(self, value: int):
-        """Update node and backpropogate to parent"""
+    def __str__(self):
+        return f'UCTNode: [Stats=[{self.value} / {self.visits}] | is_expanded={self.is_expanded} | children={len(self.children)}]'
 
-    def addChild(self, move, c, prior):
+    # Probably really inefficient
+    def __find_root(self):
+        cur = self
+
+        while cur.parent is not None:
+            cur = cur.parent
+
+        return cur
+
+    def Q(self):  # returns float
+        return self.value / (1 + self.visits)
+
+    def U(self):  # returns float
+        return math.sqrt(2) * math.sqrt(math.log(self.parent.visits) / (1 + self.visits))
+
+    def choose_best_child(self):
+        return max(self.children, key=lambda x: x.Q() + x.U())
+
+    def select(self):
+        current = self
+        while current.is_expanded:
+            current = current.choose_best_child()
+        return current
+
+    def set_children(self):
+        pb = self.game_state.get_for_color(self.game_state.to_play)
+        ob = self.game_state.get_for_color(-self.game_state.to_play)
+        moves = self.game_state.generate_moves_priority_queue(pb, ob)
+        while not moves.empty():
+            move = moves.get().move
+            if move.isPass:
+                continue
+
+            cp = copy.deepcopy(self.game_state)
+            cp.apply_move(move)
+            self.children.append(UCTNode(cp, parent=self, move=move))
+
+    def expand(self):
+        self.set_children()
+
+        if self.children:
+            self.is_expanded = True
+
+    def simulate(self):
+        cp = copy.deepcopy(self.game_state)
+
+        initial_player_save = cp.to_play
+
+        cur_player = initial_player_save
+        while not cp.is_game_complete():
+            pb = cp.get_for_color(cur_player)
+            ob = cp.get_for_color(-cur_player)
+            moves = cp.generate_moves_priority_queue(pb, ob).items
+            random_choice = np.random.choice(moves).move
+            cp.apply_move(random_choice)
+            cur_player = -cur_player
+
+        net_pieces = cp.get_for_color(initial_player_save).get_bit_count() - cp.get_for_color(
+            -initial_player_save).get_bit_count()
+        return initial_player_save, net_pieces
+
+    def back_propogate(self, initial_player, net_pieces):
+        if net_pieces == 0:  # Draw
+            player_update_val = 0.5
+            opponent_update_val = 0.5
+        else:
+            if net_pieces > 0:
+                player_update_val = 1
+                opponent_update_val = 0
+            else:
+                player_update_val = 0
+                opponent_update_val = 1
+
+        # Climb up the tree, to the root.
+        cur = self
+        while cur is not None:
+            # Color of the player who made the move we are evaluating. to_play is looking ahead 1 move.
+            cur.visits += 1
+
+            if cur.game_state.to_play == initial_player:
+                cur.value += player_update_val
+            else:
+                cur.value += opponent_update_val
+
+            cur = cur.parent
+
+    def add_child(self, move: Move):
         """Adds child node to known children"""
-        self.game_state.apply_move(move, self.game_state.get_for_color(c))
-        self.children[move] = UCTNode(self.game_state, parent=self, prior=prior)
+        self.game_state.apply_move(move)
+        self.children.append(UCTNode(self.game_state, parent=self))
 
 
 class GameBoard:
@@ -80,6 +171,8 @@ class GameBoard:
         self.opponent_color = -player.color
         self.player_board = player
         self.opponent_board = opponent
+        self.move_history: list[Move] = []
+        self.to_play = color.BLACK  # Keeps track of who moves next. Black always moves first in Othello
 
     def __str__(self):
         return f'--- GameBoard ---\n' \
@@ -88,9 +181,6 @@ class GameBoard:
                f'Config: {self.config}\n' \
                f'Available moves primary:\n{self.generate_moves_priority_queue(self.player_board, self.opponent_board)}' \
                f'Available moves opponent:\n{self.generate_moves_priority_queue(self.opponent_board, self.player_board)}'
-
-    # def UCTSearch(self):
-
 
     def draw(self):
         logger.log_comment('    A B C D E F G H')
@@ -113,11 +203,33 @@ class GameBoard:
             if i % 8 == 0:
                 print('')
 
-    def apply_move(self, board: BitBoard, move):
-        board.apply_isolated_move(move)
+    def print_move_history(self):
+        logger.log_comment(f'Move History:')
+        for i in range(len(self.move_history)):
+            logger.log_comment(f'Move #{i + 1}: {self.move_history[i]}')
+
+    def is_valid(self, move):
+        """Determines whether a given move is valid."""
+        moves = self.generate_move_mask(self.get_for_color(move.color).bits, self.get_for_color(-move.color).bits)
+
+        # Pass moves
+        if moves == 0:
+            return move.pos == -1
+
+        return (np.uint64(1 << move.pos) & moves) != 0
+
+    def apply_move(self, move: Move):
+        self.move_history.append(move)
+        self.to_play = -move.color
+
+        if move.isPass:
+            return
 
         # Update board internally
-        self.set_for_color(board)
+        board = self.get_for_color(move.color)
+        board.apply_isolated_move(move)
+
+        self.update_board(board)
         self.line_cap(board, move)
 
     def is_game_complete(self):
@@ -130,7 +242,7 @@ class GameBoard:
         """Returns the count of the total occupied cells on the board"""
         return self.player_board.get_bit_count() + self.opponent_board.get_bit_count()
 
-    def set_for_color(self, board: BitBoard) -> None:
+    def update_board(self, board: BitBoard) -> None:
         if board.color == self.player_color:
             self.player_board = board
         else:
@@ -231,175 +343,29 @@ class GameBoard:
         board.bits = self_bits
         opp.bits = opp_bits
 
-        self.set_for_color(board)
-        self.set_for_color(opp)
+        self.update_board(board)
+        self.update_board(opp)
 
-    @staticmethod
-    def __get_sum_weight(p_amt, o_amt):
-        """Helper function for evaluate(). Computes a weighted sum for two values.
-        Returns 0 if the sum is zero. Otherwise returns 100.0 * (p_amt - o_amt) / (p_amt + o_amt)"""
-        if p_amt + o_amt == 0:
-            return 0
-        sum = p_amt + o_amt
-        diff = p_amt - o_amt
+    def UCTSearch(self, num_reads):
+        root = UCTNode(self)
+        for i in range(num_reads):
+            leaf = root.select()
+            leaf.expand()
+            i, n = leaf.simulate()
+            leaf.back_propogate(i, n)
+        return max(root.children, key=lambda x: x.visits)
 
-        w = 100.0 * diff / sum
-        if sum < 0:
-            return -abs(w)
+    def select_move(self):
+        reads = 1000
+        tick = time.time()
+        result = self.UCTSearch(reads)
+        tock = time.time()
 
-        return w
+        logger.log_comment(f'Took {tock - tick:.2f}s to run {reads} times.')
+        logger.log_comment(f'Consumed {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1000000}MB memory.')
+        logger.log_comment(f'Result: {result}')
 
-    def evaluate(self):
-        p_board = self.player_board
-        o_board = self.opponent_board
-
-        p_count = p_board.get_bit_count()
-        o_count = o_board.get_bit_count()
-
-        p_moves_possible = self.generate_move_mask(p_board.bits, o_board.bits)
-        o_moves_possible = self.generate_move_mask(o_board.bits, p_board.bits)
-
-        p_pos_weight = o_pos_weight = p_corners = o_corners = p_adj_corners = o_adj_corners = np.int(0)
-
-        p_corner_mask = np.uint64(p_board.bits & self.CORNER_MASK)
-        o_corner_mask = np.uint64(o_board.bits & self.CORNER_MASK)
-
-        p_corner_pos = []
-        o_corner_pos = []
-
-        p_adj_corner_mask = np.uint64(p_board.bits & self.CORNER_ADJACENT_MASK)
-        o_adj_corner_mask = np.uint64(o_board.bits & self.CORNER_ADJACENT_MASK)
-
-        # Count number of adjacent corners for each player & their position weight.
-
-        for i in range(64):
-            mask = np.uint64(np.left_shift(1, i))
-            weight = self.WEIGHT_MAP[i]
-
-            # Corners
-            if (np.bitwise_and(p_corner_mask, mask)) != 0:
-                p_corners += 1
-                p_corner_pos.append(i)
-            elif (np.bitwise_and(o_corner_mask, mask)) != 0:
-                o_corners += 1
-                o_corner_pos.append(i)
-
-            # Whether to ignore adjacent entries.
-            ignore_self = False
-            ignore_opp = False
-
-            # Adjacent corners
-            if (np.bitwise_and(p_adj_corner_mask, mask)) != 0:
-                if len(p_corner_pos) != 0:
-                    ignore_self = self.__ignore_adjacents(i)
-
-                if not ignore_self:
-                    p_adj_corners += 1
-
-            elif (np.bitwise_and(o_adj_corner_mask, mask)) != 0:
-                if len(o_corner_pos) != 0:
-                    ignore_opp = self.__ignore_adjacents(i)
-
-                if not ignore_opp:
-                    o_adj_corners += 1
-
-            # Pos weights
-            if not ignore_self and (np.bitwise_and(p_moves_possible, mask) != 0):
-                p_pos_weight += weight
-            elif not ignore_opp and (np.bitwise_and(o_moves_possible, mask)) != 0:
-                o_pos_weight += weight
-
-        # Compute weights
-        w_stability = self.__get_sum_weight(p_pos_weight, o_pos_weight)
-        w_parity = self.__get_sum_weight(p_count, o_count)
-        w_corners = self.__get_sum_weight(p_corners, o_corners)
-        w_adj_corners = -self.__get_sum_weight(p_adj_corners, o_adj_corners)
-        w_mobility = self.__get_sum_weight(utils.count_bits(p_moves_possible), utils.count_bits(o_moves_possible))
-
-        # Factors. How important each value is relative to the others.
-        # todo: perhaps include additional weight for if a player is forced to pass
-        f_corners = 160
-        f_adj_corners = 20
-        f_mobility = 20
-        f_parity = 14
-        f_stability = 35
-
-        if o_moves_possible == 0:
-            f_mobility = 500
-
-        board_piece_sum = p_count + o_count
-        if board_piece_sum > 50:
-            # Towards the end game
-            f_parity = 20
-            f_mobility = 20
-
-        if board_piece_sum > 58:
-            # Right at the end game
-            f_parity = 200
-            f_mobility = 10
-            f_stability = 5
-
-        score = int((f_corners * w_corners) + (f_adj_corners * w_adj_corners) +
-                    (f_mobility * w_mobility) + (f_parity * w_parity) + (f_stability * w_stability))
-
-        # End game - return below min for confirmed loss, above max for confirmed win.
-        if p_count + o_count == 64:
-            if p_count < o_count:
-                return MIN_VAL - 1
-            else:
-                return MAX_VAL + 1
-
-        return score
-
-    def __ignore_adjacents(self, i):
-        """Helper function to evaluate that determines whether the adjacent corner negative weight can be ignored."""
-        matching_adjacents = self.STABILITY_IGNORES.get(i)
-        if matching_adjacents is None:
-            return False
-
-        if i in matching_adjacents:
-            return True
-        return False
-
-    def alpha_beta(self, board: 'GameBoard', player: int, depth: int, max_depth: int, alpha, beta, maximizer: bool):
-        if depth >= max_depth or board.is_game_complete():
-            res = SearchResult(depth, player, board.evaluate())
-            return res
-
-        p_board = board.get_for_color(player)
-        o_board = board.get_for_color(-player)
-        queue = board.generate_moves_priority_queue(p_board, o_board)
-
-        if maximizer:
-            max_eval = MIN_VAL
-
-            while not queue.empty():
-                new_p_board = copy.deepcopy(p_board)
-                new_board = copy.deepcopy(board)
-                new_board.apply_move(new_p_board, queue.get().move)
-
-                search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, False)
-                max_eval = max(max_eval, search_result.score)
-                alpha = max(alpha, search_result.score)
-                if beta <= alpha:
-                    break
-
-            return SearchResult(depth, player, max_eval)
-        else:
-            min_eval = MAX_VAL
-
-            while not queue.empty():
-                new_p_board = copy.deepcopy(p_board)
-                new_board = copy.deepcopy(board)
-                new_board.apply_move(new_p_board, queue.get().move)
-
-                search_result = new_board.alpha_beta(new_board, -player, depth + 1, max_depth, alpha, beta, True)
-                min_eval = min(min_eval, search_result.score)
-                beta = min(beta, search_result.score)
-                if beta <= alpha:
-                    break
-
-            return SearchResult(depth, player, min_eval)
+        return result.move
 
     def select_random_move(self, p_color: int):
         p = self.get_for_color(p_color)

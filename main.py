@@ -15,7 +15,7 @@ from bitboard import BitBoard
 # cfg = config.Config()
 
 def arg_parser():
-    parser = argparse.ArgumentParser(description='PyOthello for CSCI312 - Harry Burnett')
+    parser = argparse.ArgumentParser(description='PyOthello')
 
     parser.add_argument('--interactive', action='store_true',
                         help='Include to play PyOthello interactively.')
@@ -97,38 +97,29 @@ while not g_board.is_game_complete():
     logger.log_comment(prompt)
 
     if p_turn:
-        start = time.time()
-        move = g_board.select_random_move(p_color)
-        end = time.time()
-
-        print(f'Evaluated best move in {end - start:.4f}s')
-
-        if not move.isPass:
-            g_board.apply_move(p_board, move)
-
-        inpt = output.out_move(p_color, move, True)
+        move = g_board.select_move()
+        g_board.apply_move(move)
+        input = output.out_move(p_color, move, True)
     else:
         if cfg.interactive:
-            possible_moves = g_board.generate_move_mask(o_board.bits, p_board.bits)
-            inpt = input()
-            move = output.to_move(inpt)
+            possible_moves = g_board.generate_moves_priority_queue(o_board.bits, p_board.bits)
+            input = input()
+            move = output.to_move(input, True)
+            while not g_board.is_valid(move):
+                logger.log_comment(f'Move is invalid! Expected one of the following: '
+                                   f'{[x.move.pos for x in possible_moves.items]}')
 
             # Checks for valid move or valid pass if that was registered.
             valid = possible_moves > 0 and (np.uint64((1 << move.pos)) & possible_moves) != 0 or \
                     (move.isPass and possible_moves == 0)
         else:
-            start = time.time()
-            move = g_board.select_random_move(o_color)
-            end = time.time()
-            print(f'Evaluated best move in {end - start:.5f}s')
+            move = g_board.select_move()
 
-        if not move.isPass:
-            g_board.apply_move(o_board, move)
-
-        inpt = output.out_move(o_color, move, True)
+        g_board.apply_move(move)
+        input = output.out_move(o_color, move, True)
 
     if p_turn:
-        print(inpt)
+        print(input)
 
     g_board.draw()
     logger.log_comment(g_board.player_board)
