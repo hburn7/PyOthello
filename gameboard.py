@@ -1,4 +1,5 @@
 import copy
+import collections
 import math
 import numpy as np
 import time
@@ -19,21 +20,45 @@ class SearchResult:
     score: int
 
 
+class DummyNode(object):
+    def __init__(self):
+        self.parent = None
+        self.child_value = {0: 1.0}
+        self.child_visits = {0: 1.0}
+
+
 # Inspired by: https://github.com/brilee/python_uct/blob/master/naive_impl.py
 # https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
 class UCTNode:
-    def __init__(self, game_state, parent=None, move=None):
+    def __init__(self, game_state, parent=None, move=None, i=0):
         self.game_state: GameBoard = game_state
         self.parent: UCTNode = parent
-        self.visits = 0
-        self.value = 0.0
         self.is_expanded = False
         self.root = self if self.parent is None else self.__find_root()
         self.children = []
+        self.i = i  # int, counts move number in gameplay sequence.
         self.move = move
+        self.child_value = np.zeros([65], dtype=np.float32)
+        self.child_visits = np.zeros([65], dtype=np.float32)
 
     def __str__(self):
         return f'UCTNode: [Stats=[{self.value} / {self.visits}] | is_expanded={self.is_expanded} | children={len(self.children)}]'
+
+    @property
+    def visits(self):
+        return self.parent.child_visits[self.i]
+
+    @visits.setter
+    def visits(self, value):
+        self.parent.child_visits[self.i] = value
+
+    @property
+    def value(self):
+        return self.parent.child_value[self.i]
+
+    @value.setter
+    def value(self, value):
+        self.parent.child_value[self.i] = value
 
     # Probably really inefficient
     def __find_root(self):
@@ -44,14 +69,18 @@ class UCTNode:
 
         return cur
 
-    def Q(self):  # returns float
-        return self.value / (1 + self.visits)
+    def child_Q(self):  # returns np.array
+        return self.child_value / (1 + self.child_visits)
 
-    def U(self):  # returns float
-        return math.sqrt(2) * math.sqrt(math.log(self.parent.visits) / (1 + self.visits))
+    def child_U(self):  # returns np.array
+        n = self.child_visits
+        if type(n) is dict:
+            n = n[0]
+
+        return math.sqrt(2) * math.sqrt(math.log(n / (1 + self.child_visits)))
 
     def choose_best_child(self):
-        return max(self.children, key=lambda x: x.Q() + x.U())
+        return np.argmax(self.child_Q() + self.child_U())
 
     def select(self):
         current = self
@@ -70,7 +99,7 @@ class UCTNode:
 
             cp = copy.deepcopy(self.game_state)
             cp.apply_move(move)
-            self.children.append(UCTNode(cp, parent=self, move=move))
+            self.children.append(UCTNode(cp, parent=self, move=move, i=self.i + 1))
 
     def expand(self):
         self.set_children()
@@ -110,7 +139,7 @@ class UCTNode:
 
         # Climb up the tree, to the root.
         cur = self
-        while cur is not None:
+        while cur.parent is not None:
             # Color of the player who made the move we are evaluating. to_play is looking ahead 1 move.
             cur.visits += 1
 
@@ -123,8 +152,9 @@ class UCTNode:
 
     def add_child(self, move: Move):
         """Adds child node to known children"""
-        self.game_state.apply_move(move)
-        self.children.append(UCTNode(self.game_state, parent=self))
+        if move not in [x.move for x in self.children]:
+            self.game_state.apply_move(move)
+            self.children.append(UCTNode(self.game_state, parent=self, move=move))
 
 
 class GameBoard:
@@ -347,7 +377,7 @@ class GameBoard:
         self.update_board(opp)
 
     def UCTSearch(self, num_reads):
-        root = UCTNode(self)
+        root = UCTNode(self, parent=DummyNode())
         for i in range(num_reads):
             leaf = root.select()
             leaf.expand()
